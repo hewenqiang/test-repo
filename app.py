@@ -2,10 +2,17 @@ from flask import Flask, request, jsonify
 from datetime import datetime, timezone
 import uuid
 
+from repositories.user_repository import UserRepository
+from services.password_service import PasswordService
+from validators.registration_validator import RegistrationValidator
+
 app = Flask(__name__)
 
 # In-memory storage for todos
 todos = {}
+
+# Shared user repository instance
+user_repository = UserRepository()
 
 
 def create_app():
@@ -46,6 +53,92 @@ def validate_todo_input(data, require_title=True):
         return None, "; ".join(errors)
 
     return data, None
+
+
+@app.route("/register", methods=["POST"])
+def register():
+    """Register a new user."""
+    data = request.get_json(silent=True)
+    if data is None:
+        return jsonify({"error": "Request body must be valid JSON"}), 400
+
+    email = data.get("email", "")
+    password = data.get("password", "")
+    confirm_password = data.get("confirm_password")
+
+    is_valid, errors = RegistrationValidator.validate_registration(email, password, confirm_password)
+    if not is_valid:
+        return jsonify({"error": errors}), 400
+
+    if user_repository.exists_by_email(email):
+        return jsonify({"error": "Email already registered."}), 409
+
+    password_hash, salt = PasswordService.create_password_hash(password)
+    from models.user import User
+    user = User(email=email.strip(), password_hash=password_hash, salt=salt)
+    user_repository.save(user)
+
+    return jsonify({
+        "message": "User registered successfully.",
+        "user": {
+            "id": user.id,
+            "email": user.email,
+        }
+    }), 201
+
+
+@app.route("/change-password", methods=["POST"])
+def change_password():
+    """
+    Change a user's password.
+    Requires: email, old_password, new_password, confirm_new_password
+    """
+    data = request.get_json(silent=True)
+    if data is None:
+        return jsonify({"error": "Request body must be valid JSON"}), 400
+
+    email = data.get("email", "")
+    old_password = data.get("old_password", "")
+    new_password = data.get("new_password", "")
+    confirm_new_password = data.get("confirm_new_password")
+
+    # Validate email is provided
+    if not email or not isinstance(email, str) or not email.strip():
+        return jsonify({"error": "Email is required."}), 400
+
+    # Validate old password is provided
+    if not old_password or not isinstance(old_password, str):
+        return jsonify({"error": "Old password is required."}), 400
+
+    # Validate new password format
+    is_valid, password_error = RegistrationValidator.validate_password(new_password)
+    if not is_valid:
+        return jsonify({"error": password_error}), 400
+
+    # Validate confirm password matches
+    if confirm_new_password is not None and new_password != confirm_new_password:
+        return jsonify({"error": "New passwords do not match."}), 400
+
+    # Check new password is different from old password
+    if old_password == new_password:
+        return jsonify({"error": "New password must be different from old password."}), 400
+
+    # Find user by email
+    user = user_repository.find_by_email(email.strip())
+    if user is None:
+        return jsonify({"error": "User not found."}), 404
+
+    # Verify old password
+    if not PasswordService.verify_password(old_password, user.password_hash, user.salt):
+        return jsonify({"error": "Old password is incorrect."}), 401
+
+    # Create new password hash and update user
+    new_hash, new_salt = PasswordService.create_password_hash(new_password)
+    user.password_hash = new_hash
+    user.salt = new_salt
+    user_repository.save(user)
+
+    return jsonify({"message": "Password changed successfully."}), 200
 
 
 @app.route("/todos", methods=["POST"])
