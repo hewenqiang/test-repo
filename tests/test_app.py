@@ -236,11 +236,11 @@ class TestGetTodo:
 
 
 class TestUpdateTodo:
-    """Tests for PUT /todos/<id> endpoint."""
+    """Tests for updating todos (PATCH partial, PUT full)."""
 
     def test_update_todo_title(self, client, sample_todo):
         todo_id = sample_todo["id"]
-        response = client.put(
+        response = client.patch(
             f"/todos/{todo_id}",
             data=json.dumps({"title": "Updated Title"}),
             content_type="application/json",
@@ -252,7 +252,7 @@ class TestUpdateTodo:
 
     def test_update_todo_completed(self, client, sample_todo):
         todo_id = sample_todo["id"]
-        response = client.put(
+        response = client.patch(
             f"/todos/{todo_id}",
             data=json.dumps({"completed": True}),
             content_type="application/json",
@@ -277,14 +277,21 @@ class TestUpdateTodo:
     def test_update_todo_not_found(self, client):
         response = client.put(
             "/todos/nonexistent-id",
-            data=json.dumps({"title": "Updated"}),
+            data=json.dumps({"title": "Updated", "completed": False}),
             content_type="application/json",
         )
         assert response.status_code == 404
 
+        response2 = client.patch(
+            "/todos/nonexistent-id",
+            data=json.dumps({"title": "Updated"}),
+            content_type="application/json",
+        )
+        assert response2.status_code == 404
+
     def test_update_todo_no_updatable_fields(self, client, sample_todo):
         todo_id = sample_todo["id"]
-        response = client.put(
+        response = client.patch(
             f"/todos/{todo_id}",
             data=json.dumps({"extra_field": "value"}),
             content_type="application/json",
@@ -300,27 +307,53 @@ class TestUpdateTodo:
         )
         assert response.status_code == 400
 
+        # Also ensure PATCH invalid JSON errors
+        response2 = client.patch(
+            f"/todos/{todo_id}",
+            data="not json",
+            content_type="application/json",
+        )
+        assert response2.status_code == 400
+
     def test_update_todo_empty_title(self, client, sample_todo):
         todo_id = sample_todo["id"]
-        response = client.put(
+        # For PATCH, empty title should error
+        response = client.patch(
             f"/todos/{todo_id}",
             data=json.dumps({"title": ""}),
             content_type="application/json",
         )
         assert response.status_code == 400
 
+        # For PUT, missing completed should error requiring both fields
+        response2 = client.put(
+            f"/todos/{todo_id}",
+            data=json.dumps({"title": ""}),
+            content_type="application/json",
+        )
+        assert response2.status_code == 400
+
     def test_update_todo_invalid_completed(self, client, sample_todo):
         todo_id = sample_todo["id"]
+        # PUT invalid type should error
         response = client.put(
             f"/todos/{todo_id}",
-            data=json.dumps({"completed": "yes"}),
+            data=json.dumps({"completed": "yes", "title": "T"}),
             content_type="application/json",
         )
         assert response.status_code == 400
 
+        # PATCH invalid type should also error
+        response2 = client.patch(
+            f"/todos/{todo_id}",
+            data=json.dumps({"completed": "yes"}),
+            content_type="application/json",
+        )
+        assert response2.status_code == 400
+
     def test_update_todo_strips_title_whitespace(self, client, sample_todo):
         todo_id = sample_todo["id"]
-        response = client.put(
+        response = client.patch(
             f"/todos/{todo_id}",
             data=json.dumps({"title": "  Trimmed  "}),
             content_type="application/json",
