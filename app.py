@@ -25,13 +25,26 @@ def generate_id():
     return str(uuid.uuid4())
 
 
-def validate_todo_input(data, require_title=True):
+def validate_todo_input(data, require_title=True, require_all_fields=False):
     """
     Validate input data for creating/updating a todo.
+    If require_all_fields is True, both 'title' and 'completed' must be present with valid types.
     Returns a tuple of (validated_data, error_message).
     """
     if data is None:
         return None, "Request body must be valid JSON"
+
+    # Strict validation branch for full replacement updates (PUT)
+    if require_all_fields:
+        if not isinstance(data, dict):
+            return None, "Request body must be valid JSON"
+        if "title" not in data or "completed" not in data:
+            return None, "Both 'title' and 'completed' are required"
+        if not isinstance(data.get("title"), str) or not data.get("title", "").strip():
+            return None, "'title' must be a non-empty string"
+        if not isinstance(data.get("completed"), bool):
+            return None, "'completed' must be a boolean"
+        return data, None
 
     errors = []
 
@@ -201,8 +214,31 @@ def get_todo(todo_id):
 @app.route("/todos/<todo_id>", methods=["PUT"])
 def update_todo(todo_id):
     """
-    Update an existing todo item.
-    Supports partial updates (only provided fields are updated).
+    Full replacement update of an existing todo item.
+    Requires both 'title' and 'completed' to be provided.
+    """
+    todo = todos.get(todo_id)
+    if todo is None:
+        return jsonify({"error": f"Todo with id '{todo_id}' not found"}), 404
+
+    data = request.get_json(silent=True)
+    validated, error = validate_todo_input(data, require_title=False, require_all_fields=True)
+
+    if error:
+        return jsonify({"error": error}), 400
+
+    # Apply full replacement
+    todo["title"] = validated["title"].strip()
+    todo["completed"] = validated["completed"]
+
+    return jsonify(todo), 200
+
+
+@app.route("/todos/<todo_id>", methods=["PATCH"])
+def patch_todo(todo_id):
+    """
+    Partially update an existing todo item.
+    Only provided fields are updated.
     """
     todo = todos.get(todo_id)
     if todo is None:
@@ -220,7 +256,7 @@ def update_todo(todo_id):
     if not provided_fields:
         return jsonify({"error": "At least one of 'title' or 'completed' must be provided"}), 400
 
-    # Apply updates
+    # Apply partial updates
     if "title" in validated:
         todo["title"] = validated["title"].strip()
     if "completed" in validated:
